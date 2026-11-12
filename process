@@ -1,24 +1,29 @@
 #!/usr/bin/env bash
 # Any audio/video file -> Obsidian meeting note.   Usage: process <file>
 # Progress goes to runs/<name>/progress.log (read by recorder.py), one line per step.
-set -uo pipefail
+set -euo pipefail  # a failed step stops everything, unless it is followed by ||
+exec </dev/null    # no step reads the terminal (ffmpeg would eat keypresses, or hang in the background)
 src=$(readlink -f "$1"); name=$(basename "${src%.*}")  # before cd, so relative paths work
 cd "$(dirname "$(readlink -f "$0")")"
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True  # Qwen only fits the 6 GB GPU with this
+export PYANNOTE_METRICS_ENABLED=0  # pyannote reports usage to pyannote.ai by default
 NOTES_DIR=$HOME/Meetings  # where notes go; override in ./config (not committed), e.g. a folder in your Obsidian vault
 [ -f config ] && . ./config
 run=runs/$name; note=$NOTES_DIR/$name.md
 mkdir -p "$run" "$(dirname "$note")"; : > "$run/progress.log"
 
 log() { echo "$*" >> "$run/progress.log"; echo "$*"; }
-step() {  # step <name> <detail> <cmd...>: run cmd, log time; stop everything on failure
+step() {  # step <name> <detail> <cmd...>: run cmd, log its time
     local s=$1 d=$2; shift 2; log "start $s $(date +%s)"; local t=$SECONDS
     if "$@" > "$run/$s.log" 2>&1; then log "done $s $((SECONDS - t)) $d"
-    else log "fail $s"; notify-send "meeting-rec" "Failed at $s — see $run/$s.log"; exit 1; fi
+    else log "fail $s"; notify-send "meeting-rec" "Failed at $s — see $run/$s.log"; return 1; fi
 }
 
 step audio "" ffmpeg -v error -y -i "$src" -ar 16000 -ac 1 "$run/audio.wav"
-step language "" sh -c "python3 lang.py '$run/audio.wav' > '$run/lang.txt'"
+# one meeting at a time: one run already fills a 6 GB GPU
+exec 9>runs/.lock
+flock -n 9 || { log "wait"; flock 9; }
+step language "" sh -c 'python3 lang.py "$0" > "$1"' "$run/audio.wav" "$run/lang.txt"
 lang=$(cat "$run/lang.txt"); sed -i "\$s/\$/$([ "$lang" = fr ] && echo French || echo English)/" "$run/progress.log"
 if [ "$lang" = fr ]; then
     step words "Qwen3-ASR" .venv-qwen/bin/python asr_qwen.py "$run/audio.wav" French "$run"
@@ -34,11 +39,18 @@ Write a concise Markdown summary in $([ "$lang" = fr ] && echo French || echo En
 ## Decisions
 ## Action items (who → what)
 ## Open questions
-## Speakers (only if the transcript reveals who someone is, e.g. 'Speaker 1 — probably Marc, sales')
+## Speakers (only if the transcript reveals who someone is, e.g. 'Speaker 1 — probably the sales lead'; never guess names)
 Output only the Markdown."
-step summary "Claude" sh -c 'claude -p --model sonnet --tools "" --no-session-persistence --strict-mcp-config --setting-sources "" "$0" < "$1/transcript.md" > "$1/summary.md"' "$prompt" "$run"
+summarize() {  # transcript.md -> summary.md, with Claude or, with SUMMARY=local in ./config, on this machine
+    if [ "${SUMMARY:-claude}" = local ]; then .venv-nemo/bin/python summarize.py "$1"
+    else timeout 300 claude -p --model sonnet --tools "" --no-session-persistence --strict-mcp-config --setting-sources "" "$1"
+    fi < "$run/transcript.md" > "$run/summary.md"
+}
+# a failed summary still gives a note with the transcript
+step summary "$([ "${SUMMARY:-claude}" = local ] && echo local || echo Claude)" summarize "$prompt" ||
+    printf '# %s\n\n_No summary: it failed, see %s/summary.log._\n' "$name" "$run" > "$run/summary.md"
 
-dur=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$src" | cut -d. -f1)
+dur=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$run/audio.wav" | cut -d. -f1)  # $src may have none
 step note "" sh -c 'cat > "$0"' "$note" <<EOF
 ---
 date: $(date -d "@$(( $(stat -c %Y "$src") - dur ))" '+%Y-%m-%d %H:%M')
