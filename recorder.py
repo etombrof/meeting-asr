@@ -130,9 +130,9 @@ def record(path):
                         streams[i].kill(); streams[i] = parec(src)
                     devs[i] = (src or devs[i][0], label)
             draw([f"● REC   {clock(frames / RATE)}", "",
-                  f"mic    {devs[0][1][:16]:<16} " + (f"{bar(0)}  muted" if muted else
+                  f"mic    {devs[0][1][:18]:<18} " + (f"{bar(0)}  muted" if muted else
                                                          f"{bar((da + 60) / 60)}  {da:4.0f} dB"),
-                  f"audio  {devs[1][1][:16]:<16} {bar((dbb + 60) / 60)}  {dbb:4.0f} dB", "",
+                  f"audio  {devs[1][1][:18]:<18} {bar((dbb + 60) / 60)}  {dbb:4.0f} dB", "",
                   f"⚠ mic silent for {silent:.0f} s" if silent >= 30 else "", ""]
                  + gpu_lines() + ["", f"[enter] stop & process   [m] {'unmute' if muted else 'mute'} mic"])
             k = key()
@@ -220,8 +220,8 @@ def main():
         secs = record(path)
         os.remove(PIDFILE)  # from here the hotkey starts a new recording
         # own session: processing survives this window closing
-        subprocess.Popen([f"{HERE}/process", path], stdout=subprocess.DEVNULL,
-                         stderr=subprocess.DEVNULL, start_new_session=True)
+        subprocess.Popen([f"{HERE}/process", path], stdin=subprocess.DEVNULL,  # else ffmpeg eats keypresses
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
         follow(name, secs)
     finally:
         if os.path.exists(PIDFILE):
