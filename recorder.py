@@ -33,9 +33,12 @@ def devices():
                         d["description"])
         return d["description"]  # USB / Bluetooth: product name, e.g. "Beoplay H100"
 
+    def pactl(*args):  # LC_ALL=C: in comma-decimal locales pactl's JSON has 0,00 and doesn't parse
+        return subprocess.run(["pactl", *args], capture_output=True, text=True, env={**os.environ, "LC_ALL": "C"}).stdout
+
     def dev(kind):
-        name = subprocess.run(["pactl", f"get-default-{kind}"], capture_output=True, text=True).stdout.strip()
-        found = subprocess.run(["pactl", "-f", "json", "list", kind + "s"], capture_output=True, text=True).stdout
+        name = pactl(f"get-default-{kind}").strip()
+        found = pactl("-f", "json", "list", kind + "s")
         label = next((short(d) for d in json.loads(found or "[]") if d["name"] == name), name)
         return (name + ".monitor" if name and kind == "sink" else name), label
     return [dev("source"), dev("sink")]
@@ -59,11 +62,14 @@ def watch_gpu():
     q = "utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw"
     while True:
         try:
-            out = subprocess.run(["nvidia-smi", f"--query-gpu={q}", "--format=csv,noheader,nounits"],
-                                 capture_output=True, text=True, timeout=5).stdout.splitlines()[0]
+            r = subprocess.run(["nvidia-smi", f"--query-gpu={q}", "--format=csv,noheader,nounits"],
+                               capture_output=True, text=True, timeout=5)
             num = lambda x: float(x) if x.strip().replace(".", "").isdigit() else 0.0  # "[N/A]" -> 0
-            GPU["now"] = [num(x) for x in out.split(",")]
-            HIST.append(GPU["now"][0])
+            now = [num(x) for x in r.stdout.splitlines()[0].split(",")]
+            # errors ("No devices were found", NVML after a driver update) come on stdout too
+            GPU["now"] = now if r.returncode == 0 and len(now) == 5 else None
+            if GPU["now"]:
+                HIST.append(now[0])
         except (OSError, IndexError, subprocess.TimeoutExpired):
             GPU["now"] = None
         time.sleep(1)
@@ -166,12 +172,14 @@ def follow(name, secs):
     run, steps = f"{HERE}/runs/{name}", ["language", "words", "speakers", "summary", "note"]
     note, current, show_log = None, None, False
     while not hup:
-        state = {}
+        state, waiting = {}, False
         try:
             for line in open(f"{run}/progress.log"):
                 p = line.split(maxsplit=3)
-                if p[0] == "start":
-                    current = p[1]
+                if p[0] == "wait":  # another meeting is using the GPU
+                    waiting = True
+                elif p[0] == "start":
+                    current, waiting = p[1], False
                     began = int(p[2]) if len(p) > 2 else time.time()
                     prog = progress(f"{run}/{p[1]}.log")
                     state[p[1]] = f"… {p[1]:<10} {prog[:26]:<26} {clock(time.time() - began)[3:]}"
@@ -184,7 +192,7 @@ def follow(name, secs):
                     note = line[5:].strip()
         except FileNotFoundError:
             pass
-        head = [f"■ {clock(secs)} saved", ""]
+        head = [f"■ {clock(secs)} saved", "… waiting for the previous meeting" if waiting else ""]
         if show_log and current:
             cols = min(max(W, os.get_terminal_size().columns - 1), 140)
             log = [l.removeprefix("progress: ") for l in tail(f"{run}/{current}.log")]
@@ -196,13 +204,24 @@ def follow(name, secs):
             draw(lines)
         k = key()
         if k == b"o" and note:
-            subprocess.Popen(["xdg-open", "obsidian://open?path=" + urllib.parse.quote(note)])
+            # own session: else Obsidian, if this starts it, quits when the window closes
+            subprocess.Popen(["xdg-open", "obsidian://open?path=" + urllib.parse.quote(note)], start_new_session=True,
+                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         if k == b"l":
             show_log = not show_log
             sys.stdout.write("\x1b[2J")  # the two views have different widths
         if k in (b"q", b"\n", b"\r"):
             return
         time.sleep(0.3)
+
+
+def release_pidfile():
+    """Remove the pidfile only if it is still ours: a newer recorder may have written its own."""
+    try:
+        if open(PIDFILE).read() == str(os.getpid()):
+            os.remove(PIDFILE)
+    except OSError:
+        pass
 
 
 def main():
@@ -218,14 +237,13 @@ def main():
     tty.setcbreak(0)
     try:
         secs = record(path)
-        os.remove(PIDFILE)  # from here the hotkey starts a new recording
+        release_pidfile()  # from here the hotkey starts a new recording
         # own session: processing survives this window closing
         subprocess.Popen([f"{HERE}/process", path], stdin=subprocess.DEVNULL,  # else ffmpeg eats keypresses
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
         follow(name, secs)
     finally:
-        if os.path.exists(PIDFILE):
-            os.remove(PIDFILE)
+        release_pidfile()
         if not hup:
             termios.tcsetattr(0, termios.TCSADRAIN, old)
 
