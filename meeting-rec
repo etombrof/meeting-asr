@@ -2,4 +2,7 @@
 # Hotkey target: open the meeting recorder, or stop the one that is recording.
 # Install: ln -s "$PWD/meeting-rec" ~/.local/bin/
 pid=$(cat "${XDG_RUNTIME_DIR:-/tmp}/meeting-rec.pid" 2>/dev/null) && kill -0 "$pid" 2>/dev/null && exec kill -TERM "$pid"
-exec gnome-terminal --hide-menubar --geometry=54x20 --title=meeting-rec -- python3 "$(dirname "$(readlink -f "$0")")/recorder.py"
+dir=$(dirname "$(readlink -f "$0")")
+[ -x "$dir/.venv-nemo/bin/python" ] || exec notify-send meeting-rec "Setup not finished: $dir/.venv-nemo is missing (see docs/details.md)"
+# the project's own Python: the recorder needs audioop (gone in 3.13), and a system python3 may be anything
+exec gnome-terminal --hide-menubar --geometry=54x20 --title=meeting-rec -- "$dir/.venv-nemo/bin/python" "$dir/recorder.py"

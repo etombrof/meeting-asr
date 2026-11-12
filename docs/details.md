@@ -12,8 +12,8 @@ hotkey ─► recorder.py ─► recordings/<date>.wav    left = your mic, right
 
 | Meeting | language | words | speakers | summary | total |
 |---|---|---|---|---|---|
-| 31 min, English | 3 s | 28 s | 100–140 s | 11 s | ~3 min |
-| 20 min, French | 3–8 s | 531 s | 67 s | 11 s | ~10 min |
+| 31 min, English | 4–6 s | 28 s | 100–140 s | 11 s | ~3 min |
+| 20 min, French | 4–6 s | 531 s | 67 s | 11 s | ~10 min |
 
 Tested on Ubuntu 22.04, GNOME on X11, PipeWire 0.3.48 and an RTX 3060 Laptop GPU with 6 GB.
 
@@ -25,8 +25,7 @@ Tested on Ubuntu 22.04, GNOME on X11, PipeWire 0.3.48 and an RTX 3060 Laptop GPU
 | NVIDIA GPU ≥ 6 GB, `nvidia-smi` | models, GPU panel |
 | GNOME Terminal | recorder window |
 | `ffmpeg`, `notify-send` | audio conversion, "note ready" pop-up |
-| system `python3` 3.10–3.12 with `faster-whisper` | recorder (uses `audioop`, removed in 3.13), language check |
-| [`uv`](https://docs.astral.sh/uv/) | the 2 model environments |
+| [`uv`](https://docs.astral.sh/uv/) | the 2 Python environments; every script runs in them, no system Python needed |
 | [`claude` CLI](https://github.com/anthropics/claude-code), logged in | summary (not needed with `SUMMARY=local`) |
 | Hugging Face account, terms accepted for [pyannote/speaker-diarization-community-1](https://huggingface.co/pyannote/speaker-diarization-community-1) | speaker model (gated) |
 
@@ -37,7 +36,6 @@ Disk: about 7 GB for the environments, plus about 12 GB of models downloaded on 
 ```sh
 git clone https://github.com/etombrof/meeting-asr && cd meeting-asr
 sudo apt install ffmpeg pulseaudio-utils libnotify-bin
-pip install --user faster-whisper==1.2.1
 uv venv -p 3.12 .venv-qwen && VIRTUAL_ENV=.venv-qwen uv pip install qwen-asr==0.0.6 pyannote.audio==4.0.7
 uv venv -p 3.12 .venv-nemo && VIRTUAL_ENV=.venv-nemo uv pip install "nemo_toolkit[asr]==3.0.0" bitsandbytes==0.50.2 accelerate==1.15.0
 .venv-qwen/bin/hf auth login                                  # after accepting the pyannote terms

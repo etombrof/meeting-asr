@@ -23,7 +23,7 @@ step audio "" ffmpeg -v error -y -i "$src" -ar 16000 -ac 1 "$run/audio.wav"
 # one meeting at a time: one run already fills a 6 GB GPU
 exec 9>runs/.lock
 flock -n 9 || { log "wait"; flock 9; }
-step language "" sh -c 'python3 lang.py "$0" > "$1"' "$run/audio.wav" "$run/lang.txt"
+step language "" sh -c '.venv-nemo/bin/python lang.py "$0" > "$1"' "$run/audio.wav" "$run/lang.txt"
 lang=$(cat "$run/lang.txt"); sed -i "\$s/\$/$([ "$lang" = fr ] && echo French || echo English)/" "$run/progress.log"
 if [ "$lang" = fr ]; then
     step words "Qwen3-ASR" .venv-qwen/bin/python asr_qwen.py "$run/audio.wav" French "$run"
@@ -31,7 +31,7 @@ else
     step words "Parakeet v2" .venv-nemo/bin/python asr_parakeet.py "$run/audio.wav" "$run"
 fi
 step speakers "pyannote" .venv-qwen/bin/python diarize.py "$run/audio.wav" "$run"
-step merge "" python3 merge.py "$run"
+step merge "" .venv-nemo/bin/python merge.py "$run"
 
 prompt="Below is an automatic meeting transcript. Speaker labels (Speaker 1, 2…) come from a voice-separation tool and can be wrong around turn changes; words can be misheard.
 Write a concise Markdown summary in $([ "$lang" = fr ] && echo French || echo English). Start with one line: '# <title, at most 8 words>'. Then these sections, skipping any that would be empty:
