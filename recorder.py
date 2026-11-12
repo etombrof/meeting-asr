@@ -111,16 +111,37 @@ def key():
 
 
 def record(path):
-    devs = devices()
-    streams = [parec(src) for src, _ in devs]  # mic, output
+    devs, streams = devices(), []  # mic, output
+
+    def restart():
+        """(Re)start both streams together: restarting only one leaves it behind the other for good."""
+        for s in streams:
+            s.kill(); s.wait()
+        streams[:] = [parec(src) for src, _ in devs]
+
+    def refresh():
+        """Follow the current defaults (e.g. a headset plugged in), like the meeting app does.
+        True if one changed. pactl failing gives "" names: keep the old device then."""
+        new = devices()
+        changed = any(src and src != d[0] for (src, _), d in zip(new, devs))
+        devs[:] = [(src, label) if src else d for (src, label), d in zip(new, devs)]
+        return changed
+
+    restart()
     wf = wave.open(path, "wb")
     wf.setnchannels(2); wf.setsampwidth(2); wf.setframerate(RATE)
-    frames, silent, names_at, muted = 0, 0.0, time.time(), False
+    frames, silent, names_at, muted, lost = 0, 0.0, time.time(), False, None
     try:
         while not stop:
             a, b = (s.stdout.read(BLOCK) for s in streams)
-            if len(a) < BLOCK or len(b) < BLOCK:
-                break  # a capture stream died; keep what we have
+            if len(a) < BLOCK or len(b) < BLOCK:  # a stream ended: audio server restarted, device gone…
+                lost = lost or time.time()
+                draw([f"● REC   {clock(frames / RATE)}", "", "… audio lost, reconnecting", "", "[enter] stop & process"])
+                if time.time() - lost > 10 or key() in (b"\n", b"\r"):
+                    break  # gone for good, or stopped; keep what we have
+                time.sleep(0.5); refresh(); restart()
+                continue
+            lost = None
             if muted:
                 a = bytes(BLOCK)  # silence keeps the timeline; the meeting app still hears the mic
             wf.writeframes(audioop.add(audioop.tostereo(a, 2, 1, 0), audioop.tostereo(b, 2, 0, 1), 2))
@@ -129,12 +150,8 @@ def record(path):
             silent = silent + 0.1 if da < -55 and not muted else 0.0
             if time.time() - names_at > 3:
                 names_at = time.time()
-                for i, (src, label) in enumerate(devices()):
-                    # default changed, e.g. headset plugged in: follow it, like the meeting app does
-                    # shortcut: the switch leaves a ~0.2 s gap in that channel, fine for speech
-                    if src and src != devs[i][0]:
-                        streams[i].kill(); streams[i] = parec(src)
-                    devs[i] = (src or devs[i][0], label)
+                if refresh():
+                    restart()  # shortcut: ~0.2 s gap in both channels, fine for speech
             draw([f"● REC   {clock(frames / RATE)}", "",
                   f"mic    {devs[0][1][:18]:<18} " + (f"{bar(0)}  muted" if muted else
                                                          f"{bar((da + 60) / 60)}  {da:4.0f} dB"),
@@ -147,7 +164,7 @@ def record(path):
             muted ^= k == b"m"
     finally:
         for s in streams:
-            s.kill()
+            s.kill(); s.wait()
         wf.close()
     return frames / RATE
 
@@ -210,7 +227,7 @@ def follow(name, secs):
         if k == b"l":
             show_log = not show_log
             sys.stdout.write("\x1b[2J")  # the two views have different widths
-        if k in (b"q", b"\n", b"\r"):
+        if k == b"q":  # not Enter: a double Enter to stop recording would close this view too
             return
         time.sleep(0.3)
 
@@ -225,9 +242,12 @@ def release_pidfile():
 
 
 def main():
-    name = datetime.now().strftime("%Y-%m-%d-%H%M")
+    base = datetime.now().strftime("%Y-%m-%d-%H%M")
+    os.makedirs(f"{HERE}/recordings", exist_ok=True)
+    # 2 recordings started in the same minute: the second gets -2, instead of overwriting the first
+    name = next(n for n in [base, *(f"{base}-{i}" for i in range(2, 100))]
+                if not os.path.exists(f"{HERE}/recordings/{n}.wav") and not os.path.exists(f"{HERE}/runs/{n}"))
     path = f"{HERE}/recordings/{name}.wav"
-    os.makedirs(os.path.dirname(path), exist_ok=True)
     for s in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
         signal.signal(s, on_signal)
     open(PIDFILE, "w").write(str(os.getpid()))
