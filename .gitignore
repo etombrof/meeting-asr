@@ -5,3 +5,4 @@ runs/
 out/
 meeting.wav
 __pycache__/
+config

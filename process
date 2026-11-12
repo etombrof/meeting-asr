@@ -2,10 +2,12 @@
 # Any audio/video file -> Obsidian meeting note.   Usage: process <file>
 # Progress goes to runs/<name>/progress.log (read by recorder.py), one line per step.
 set -uo pipefail
+src=$(readlink -f "$1"); name=$(basename "${src%.*}")  # before cd, so relative paths work
 cd "$(dirname "$(readlink -f "$0")")"
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True  # Qwen only fits the 6 GB GPU with this
-src=$(readlink -f "$1"); name=$(basename "${src%.*}")
-run=runs/$name; note=$HOME/Obsidian/Personal/Meetings/$name.md
+NOTES_DIR=$HOME/Meetings  # where notes go; override in ./config (not committed), e.g. a folder in your Obsidian vault
+[ -f config ] && . ./config
+run=runs/$name; note=$NOTES_DIR/$name.md
 mkdir -p "$run" "$(dirname "$note")"; : > "$run/progress.log"
 
 log() { echo "$*" >> "$run/progress.log"; echo "$*"; }
