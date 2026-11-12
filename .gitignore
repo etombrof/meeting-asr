@@ -1,0 +1,7 @@
+# big, and meeting audio/transcripts are private
+.venv-*/
+recordings/
+runs/
+out/
+meeting.wav
+__pycache__/

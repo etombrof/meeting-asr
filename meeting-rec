@@ -1,0 +1,5 @@
+#!/bin/sh
+# Super+Shift+M: open the meeting recorder, or stop the one that is recording.
+# Installed as a link: ln -s ~/personal/meeting-asr/meeting-rec ~/.local/bin/meeting-rec
+pid=$(cat "${XDG_RUNTIME_DIR:-/tmp}/meeting-rec.pid" 2>/dev/null) && kill -0 "$pid" 2>/dev/null && exec kill -TERM "$pid"
+exec gnome-terminal --hide-menubar --geometry=54x20 --title=meeting-rec -- python3 "$HOME/personal/meeting-asr/recorder.py"

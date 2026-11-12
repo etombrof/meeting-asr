@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# Any audio/video file -> Obsidian meeting note.   Usage: process <file>
+# Progress goes to runs/<name>/progress.log (read by recorder.py), one line per step.
+set -uo pipefail
+cd "$(dirname "$(readlink -f "$0")")"
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True  # Qwen only fits the 6 GB GPU with this
+src=$(readlink -f "$1"); name=$(basename "${src%.*}")
+run=runs/$name; note=$HOME/Obsidian/Personal/Meetings/$name.md
+mkdir -p "$run" "$(dirname "$note")"; : > "$run/progress.log"
+
+log() { echo "$*" >> "$run/progress.log"; echo "$*"; }
+step() {  # step <name> <detail> <cmd...>: run cmd, log time; stop everything on failure
+    local s=$1 d=$2; shift 2; log "start $s $(date +%s)"; local t=$SECONDS
+    if "$@" > "$run/$s.log" 2>&1; then log "done $s $((SECONDS - t)) $d"
+    else log "fail $s"; notify-send "meeting-rec" "Failed at $s — see $run/$s.log"; exit 1; fi
+}
+
+step audio "" ffmpeg -v error -y -i "$src" -ar 16000 -ac 1 "$run/audio.wav"
+step language "" sh -c "python3 lang.py '$run/audio.wav' > '$run/lang.txt'"
+lang=$(cat "$run/lang.txt"); sed -i "\$s/\$/$([ "$lang" = fr ] && echo French || echo English)/" "$run/progress.log"
+if [ "$lang" = fr ]; then
+    step words "Qwen3-ASR" .venv-qwen/bin/python asr_qwen.py "$run/audio.wav" French "$run"
+else
+    step words "Parakeet v2" .venv-nemo/bin/python asr_parakeet.py "$run/audio.wav" "$run"
+fi
+step speakers "pyannote" .venv-qwen/bin/python diarize.py "$run/audio.wav" "$run"
+step merge "" python3 merge.py "$run"
+
+prompt="Below is an automatic meeting transcript. Speaker labels (Speaker 1, 2…) come from a voice-separation tool and can be wrong around turn changes; words can be misheard.
+Write a concise Markdown summary in $([ "$lang" = fr ] && echo French || echo English). Start with one line: '# <title, at most 8 words>'. Then these sections, skipping any that would be empty:
+## Summary (3-6 bullets)
+## Decisions
+## Action items (who → what)
+## Open questions
+## Speakers (only if the transcript reveals who someone is, e.g. 'Speaker 1 — probably Marc, sales')
+Output only the Markdown."
+step summary "Claude" sh -c 'claude -p --model sonnet --tools "" --no-session-persistence --strict-mcp-config --setting-sources "" "$0" < "$1/transcript.md" > "$1/summary.md"' "$prompt" "$run"
+
+dur=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$src" | cut -d. -f1)
+step note "" sh -c 'cat > "$0"' "$note" <<EOF
+---
+date: $(date -d "@$(( $(stat -c %Y "$src") - dur ))" '+%Y-%m-%d %H:%M')
+duration: $((dur / 60)) min
+language: $lang
+audio: "file://$src"
+tags: [meeting]
+---
+$(cat "$run/summary.md")
+
+## Transcript
+$(cat "$run/transcript.md")
+EOF
+log "note $note"
+notify-send "meeting-rec" "Meeting note ready: $name"
