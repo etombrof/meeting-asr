@@ -9,8 +9,8 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True  # Qwen only fits the 6 
 export PYANNOTE_METRICS_ENABLED=0  # pyannote reports usage to pyannote.ai by default
 NOTES_DIR=$HOME/Meetings  # where notes go; override in ./config (not committed), e.g. a folder in your Obsidian vault
 [ -f config ] && . ./config
-run=runs/$name; note=$NOTES_DIR/$name.md
-mkdir -p "$run" "$(dirname "$note")"; : > "$run/progress.log"
+run=runs/$name
+mkdir -p "$run" "$NOTES_DIR"; : > "$run/progress.log"
 
 log() { echo "$*" >> "$run/progress.log"; echo "$*"; }
 step() {  # step <name> <detail> <cmd...>: run cmd, log its time
@@ -34,7 +34,7 @@ step speakers "pyannote" .venv-qwen/bin/python diarize.py "$run/audio.wav" "$run
 step merge "" .venv-nemo/bin/python merge.py "$run"
 
 prompt="Below is an automatic meeting transcript. Speaker labels (Speaker 1, 2…) come from a voice-separation tool and can be wrong around turn changes; words can be misheard.
-Write a concise Markdown summary in $([ "$lang" = fr ] && echo French || echo English). Start with one line: '# <title, at most 8 words>'. Then these sections, skipping any that would be empty:
+Write a concise Markdown summary in $([ "$lang" = fr ] && echo French || echo English). Start with one line: '# <title, at most 8 words>', then one line: 'File: <2-4 key words, lowercase, joined by hyphens, e.g. thesis-proposal-review>'. Then these sections, skipping any that would be empty:
 ## Summary (3-6 bullets)
 ## Decisions
 ## Action items (who → what)
@@ -46,9 +46,22 @@ summarize() {  # transcript.md -> summary.md, with Claude or, with SUMMARY=local
     else timeout 300 claude -p --model sonnet --tools "" --no-session-persistence --strict-mcp-config --setting-sources "" "$1"
     fi < "$run/transcript.md" > "$run/summary.md"
 }
-# a failed summary still gives a note with the transcript
-step summary "$([ "${SUMMARY:-claude}" = local ] && echo local || echo Claude)" summarize "$prompt" ||
+if step summary "$([ "${SUMMARY:-claude}" = local ] && echo local || echo Claude)" summarize "$prompt"; then
+    # file-name words: the summary's "File:" line (removed from the note), else the title's
+    words=$(sed -n 's/^[Ff]ile: *//p' "$run/summary.md" | head -1)
+    [ -n "$words" ] || words=$(sed -n '/^# /{s/^# *//p;q}' "$run/summary.md")
+    sed -i '/^[Ff]ile: /d' "$run/summary.md"
+    # "Thèse : l'agence" -> "these-lagence": ASCII lowercase words joined by -, at most 4
+    slug=$(.venv-nemo/bin/python -c 'import re, sys, unicodedata as u
+t = u.normalize("NFKD", sys.argv[1]).encode("ascii", "ignore").decode().lower().replace("'"'"'", "")
+print("-".join(re.findall("[a-z0-9]+", t)[:4]))' "$words")
+else  # a failed summary still gives a note with the transcript
     printf '# %s\n\n_No summary: it failed, see %s/summary.log._\n' "$name" "$run" > "$run/summary.md"
+    slug=
+fi
+prev=$(cat "$run/note-path" 2>/dev/null || true)
+if [ -n "$prev" ] && [ -f "$prev" ]; then note=$prev  # processed before: keep its note's name, so links keep working
+else note="$NOTES_DIR/$name${slug:+-$slug}.md"; fi  # e.g. 2026-11-11-1357-thesis-proposal-review.md
 
 dur=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$run/audio.wav" | cut -d. -f1)  # $src may have none
 step note "" sh -c 'cat > "$0"' "$note" <<EOF
@@ -64,5 +77,6 @@ $(cat "$run/summary.md")
 ## Transcript
 $(cat "$run/transcript.md")
 EOF
+printf '%s\n' "$note" > "$run/note-path"
 log "note $note"
-notify-send "meeting-rec" "Meeting note ready: $name"
+notify-send "meeting-rec" "Meeting note ready: $(basename "$note" .md)"

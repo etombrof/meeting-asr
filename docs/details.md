@@ -7,7 +7,7 @@ hotkey ─► recorder.py ─► recordings/<date>.wav    left = your mic, right
                               │
           process ◄───────────┘                   (any audio/video file also works)
             language: Whisper ─► words: Parakeet v2 (EN) / Qwen3-ASR (FR) ─► speakers: pyannote
-            ─► merge ─► summary: claude -p, or Qwen3.5-4B with SUMMARY=local ─► $NOTES_DIR/<date>.md
+            ─► merge ─► summary: claude -p, or Qwen3.5-4B with SUMMARY=local ─► $NOTES_DIR/<date>-<key-words>.md
 ```
 
 | Meeting | language | words | speakers | summary | total |

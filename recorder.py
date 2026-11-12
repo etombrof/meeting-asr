@@ -216,7 +216,8 @@ def follow(name, secs):
             draw(head + [f"log: {current}", ""] + log + ["", "[l] steps   [q] close"], cols)
         else:
             lines = head + [state.get(s, "  " + s) for s in steps] + [""] + gpu_lines() + [""]
-            lines.append(f"✓ Meetings/{name}.md  [o] open" if note else "")
+            stem = os.path.basename(note or "").removesuffix(".md")  # "<date> <title>"
+            lines.append(f"✓ {stem[:35]}{'…' if len(stem) > 35 else ''}  [o] open" if note else "")
             lines.append("[l] log   [q] close (processing continues)")
             draw(lines)
         k = key()
