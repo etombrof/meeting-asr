@@ -1,6 +1,7 @@
 # meeting-asr
 
-![The recorder window: recording with mic and audio levels, then each processing step until the note is ready](docs/hero.gif)
+<img src="docs/hero.gif" width="480" alt="The recorder window: recording with mic and audio levels, then each processing step until the note is ready">
+
 <sub>Processing shown 6× faster. Audio: NASA Apollo 11 onboard recording (public domain).</sub>
 
 Press a hotkey, have your meeting, get a Markdown note: a short summary plus the transcript labelled by speaker. It works with Teams, Meet, any other app, or people in the room.
